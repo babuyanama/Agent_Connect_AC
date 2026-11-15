@@ -6,12 +6,12 @@ from .db import db
 from .errors import ApiError
 
 KINDS = ("offer", "announcement", "market_update", "question")
-EXPLAIN_ALL_LIMIT = 200     # below this many agents we score everyone so the UI can explain "why not"
-MAX_FANOUT = 50             # hard cap on recipients per post (anti-spam)
+EXPLAIN_ALL_LIMIT = 200     
+MAX_FANOUT = 50             
 EXPLORE_BAND, EXPLORE_P = 0.08, 0.10
 
-route_q = queue.Queue()     # post ids waiting for routing
-engage_q = queue.Queue()    # notification ids for builtin agent runtimes
+route_q = queue.Queue()   
+engage_q = queue.Queue()    
 
 now = time.time
 J = json.dumps
@@ -21,7 +21,6 @@ def _hash_key(k):
     return hashlib.sha256(k.encode()).hexdigest()
 
 
-# ───────────────────────── agents ─────────────────────────
 def _norm_topics(x, default):
     if isinstance(x, dict):
         items = {str(k): float(v) for k, v in x.items()}
@@ -35,11 +34,11 @@ def _norm_topics(x, default):
 def _write_topics(aid, interests, offers, description):
     w = {}
     for t, v in taxonomy.extract(description).items():
-        w[t] = v * 0.4                      # topics implied by the free-text description
+        w[t] = v * 0.4                      
     for t, v in offers.items():
-        w[t] = max(w.get(t, 0), min(v, 0.8))  # things the agent can *offer* are also relevant
+        w[t] = max(w.get(t, 0), min(v, 0.8))  
     for t, v in interests.items():
-        w[t] = max(w.get(t, 0), v)          # declared interests win
+        w[t] = max(w.get(t, 0), v)         
     db.x("DELETE FROM agent_topics WHERE agent_id=?", (aid,))
     for t, v in w.items():
         db.x("INSERT INTO agent_topics VALUES(?,?,?)", (aid, t, v))
@@ -73,7 +72,7 @@ def register_agent(d, key=None, verified=False):
     _write_topics(aid, interests, offers, desc)
     a = get_agent(aid)
     out = public_agent(a)
-    out["api_key"] = key  # shown once
+    out["api_key"] = key 
     return out
 
 
@@ -184,7 +183,7 @@ def report_post(agent, pid, reason):
         raise ApiError(409, "already reported")
     n = db.one("SELECT COUNT(*) c FROM reports WHERE post_id=?", (pid,))["c"]
     db.x("UPDATE posts SET reports=? WHERE id=?", (n, pid))
-    if n >= 3 and p["status"] == "published":     # community quarantine
+    if n >= 3 and p["status"] == "published":     
         db.x("UPDATE posts SET status='quarantined' WHERE id=?", (pid,))
         _bump_trust(p["agent_id"], -0.15)
     return get_post(pid)
@@ -220,8 +219,6 @@ def feed(limit=30):
     rows = db.q("SELECT * FROM posts WHERE status IN ('published','held','quarantined') ORDER BY id DESC LIMIT ?", (limit,))
     return [_post_view(p) for p in rows]
 
-
-# ───────────────────────── routing (the core problem) ─────────────────────────
 def _tok(text):
     stop = {"the", "a", "an", "and", "or", "of", "to", "for", "on", "in", "with", "all", "is", "are", "we", "our", "your", "at", "by", "from"}
     return [w.rstrip("s") for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if w not in stop and len(w) > 1]
@@ -305,7 +302,7 @@ def route(pid):
         else:
             if kw_hit:
                 score, reasons["keyword"] = max(score, 0.6), kw_hit
-            if llm.enabled() and abs(score - thr) < 0.1:      # borderline -> second opinion
+            if llm.enabled() and abs(score - thr) < 0.1:   
                 j = llm.judge(a, post)
                 if j is not None:
                     reasons["llm_judge"] = j
@@ -313,7 +310,7 @@ def route(pid):
             if score >= thr:
                 decision = "deliver"
             elif score >= thr - EXPLORE_BAND and random.random() < EXPLORE_P:
-                decision, reasons["explore"] = "deliver", True   # sample just-below-threshold to find missed matches
+                decision, reasons["explore"] = "deliver", True  
         log.append({"agent_id": a["id"], "name": a["name"], "score": round(score, 3), "decision": decision,
                     "threshold": round(thr, 3), "reasons": reasons})
 
@@ -322,7 +319,7 @@ def route(pid):
     for l in log:
         if l["decision"] == "deliver" and l["agent_id"] not in keep:
             l["decision"] = "fanout_cap"
-    for l in deliver:  # daily budget (spam control on the receiving side), bypassed for very strong matches
+    for l in deliver: 
         a = next(x for x in cands if x["id"] == l["agent_id"])
         used = db.one("SELECT COUNT(*) c FROM notifications WHERE agent_id=? AND kind='post' AND created_at>?", (a["id"], now() - 86400))["c"]
         if used >= a["daily_budget"] and l["score"] < 0.8:
@@ -356,7 +353,6 @@ def _push(agent, nid):
     threading.Thread(target=go, daemon=True).start()
 
 
-# ───────────────────────── notifications / inbox ─────────────────────────
 def get_notification(nid):
     n = db.one("SELECT * FROM notifications WHERE id=?", (nid,))
     if not n:
@@ -450,7 +446,6 @@ def feedback(agent, nid, outcome):
     return get_notification(nid)
 
 
-# ───────────────────────── stats ─────────────────────────
 def stats():
     agents = db.q("SELECT * FROM agents ORDER BY id")
     out = []
@@ -467,7 +462,6 @@ def stats():
             "llm": "anthropic:" + llm.MODEL if llm.enabled() else "mock (set ANTHROPIC_API_KEY for a real LLM)"}
 
 
-# ───────────────────────── background workers ─────────────────────────
 def _router_loop():
     while True:
         pid = route_q.get()
