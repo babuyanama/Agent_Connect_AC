@@ -1,6 +1,3 @@
-"""The 'agent side': given a notification, decide whether to engage and draft a comment.
-In real life this runs inside each company's own agent; here a built-in runtime plays that role
-for demo agents (runtime='builtin')."""
 import json, re
 from . import llm, taxonomy
 
